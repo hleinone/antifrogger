@@ -1,64 +1,62 @@
 package org.androidaalto.antifrog;
 
-
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-
-import org.andengine.engine.camera.Camera;
+import org.andengine.engine.Engine;
+import org.andengine.engine.camera.BoundCamera;
+import org.andengine.engine.camera.hud.HUD;
 import org.andengine.engine.options.EngineOptions;
 import org.andengine.engine.options.ScreenOrientation;
 import org.andengine.engine.options.resolutionpolicy.RatioResolutionPolicy;
+import org.andengine.entity.primitive.Rectangle;
+import org.andengine.entity.scene.IOnSceneTouchListener;
 import org.andengine.entity.scene.Scene;
-import org.andengine.entity.scene.background.AutoParallaxBackground;
-import org.andengine.entity.scene.background.ParallaxBackground.ParallaxEntity;
 import org.andengine.entity.sprite.AnimatedSprite;
-import org.andengine.entity.sprite.Sprite;
 import org.andengine.entity.util.FPSLogger;
+import org.andengine.extension.physics.box2d.PhysicsConnector;
+import org.andengine.extension.physics.box2d.PhysicsFactory;
+import org.andengine.extension.physics.box2d.PhysicsWorld;
+import org.andengine.extension.physics.box2d.util.Vector2Pool;
+import org.andengine.input.sensor.acceleration.AccelerationData;
+import org.andengine.input.sensor.acceleration.IAccelerationListener;
+import org.andengine.input.touch.TouchEvent;
 import org.andengine.opengl.texture.TextureOptions;
 import org.andengine.opengl.texture.atlas.bitmap.BitmapTextureAtlas;
 import org.andengine.opengl.texture.atlas.bitmap.BitmapTextureAtlasTextureRegionFactory;
-import org.andengine.opengl.texture.region.ITextureRegion;
 import org.andengine.opengl.texture.region.TiledTextureRegion;
-import org.andengine.opengl.vbo.VertexBufferObjectManager;
 import org.andengine.ui.activity.SimpleBaseGameActivity;
 
-import android.view.Display;
+import android.hardware.SensorManager;
+import android.widget.Toast;
+
+import com.badlogic.gdx.math.Vector2;
+import com.badlogic.gdx.physics.box2d.Body;
+import com.badlogic.gdx.physics.box2d.BodyDef.BodyType;
+import com.badlogic.gdx.physics.box2d.FixtureDef;
 
 /**
- * Anti Frog Game
- *
  * @author Android Aalto
  */
-public class AntiFrogActivity extends SimpleBaseGameActivity {
+public class AntiFrogActivity extends SimpleBaseGameActivity implements IAccelerationListener, IOnSceneTouchListener {
 	// ===========================================================
 	// Constants
 	// ===========================================================
 
-	private static int displayWidth = 720;
-	private static int displayHeight = 480;
-	private static final int NUMBER_OF_FROGS = 1;
+	private static final int CAMERA_WIDTH = 800;
+	private static final int CAMERA_HEIGHT = 480;
 
-
-	// ===========================================================
-	// Game logic
-	// ===========================================================
-	private List<Frog> frogList;
-	 
-	
 	// ===========================================================
 	// Fields
 	// ===========================================================
 
+	private BoundCamera mBoundChaseCamera;
+
+	private Scene mScene;
+
+	private PhysicsWorld mPhysicsWorld;
+
 	private BitmapTextureAtlas mBitmapTextureAtlas;
-	private TiledTextureRegion mPlayerTextureRegion;
-	private TiledTextureRegion mEnemyTextureRegion;
+	private TiledTextureRegion mBoxFaceTextureRegion;
 
-	private BitmapTextureAtlas mAutoParallaxBackgroundTexture;
-
-	private ITextureRegion mParallaxLayerBack;
-	private ITextureRegion mParallaxLayerMid;
-	private ITextureRegion mParallaxLayerFront;
+	private int mFaceCount;
 
 	// ===========================================================
 	// Constructors
@@ -72,78 +70,120 @@ public class AntiFrogActivity extends SimpleBaseGameActivity {
 	// Methods for/from SuperClass/Interfaces
 	// ===========================================================
 
-	//@Override
+	@Override
 	public EngineOptions onCreateEngineOptions() {
-		
-		// obtain the screen resolution of the device
-		Display display = getWindowManager().getDefaultDisplay(); 
-		this.displayHeight = display.getHeight();
-		this.displayWidth = display.getWidth();
-		
-		// generate the set of frogs
-		this.frogList = new ArrayList<Frog>();
-		for (int i=0; i<= NUMBER_OF_FROGS; i++) {
-			this.frogList.add(new Frog(10, 5, 2)); //make it random x(0-100), y(0-10) an leaplength(0-10)
-		}
-		
-		
-		final Camera camera = new Camera(0, 0, displayWidth, displayHeight);
-		return new EngineOptions(true, ScreenOrientation.LANDSCAPE_FIXED, new RatioResolutionPolicy(displayWidth, displayHeight), camera);
+		Toast.makeText(this, "Touch the screen to add boxes.", Toast.LENGTH_LONG).show();
+	
+		this.mBoundChaseCamera = new BoundCamera(0, 0, CAMERA_WIDTH / 2, CAMERA_HEIGHT / 2, 0, CAMERA_WIDTH, 0, CAMERA_HEIGHT);
+		this.mBoundChaseCamera.setBoundsEnabled(false);
+
+		return new EngineOptions(true, ScreenOrientation.LANDSCAPE_FIXED, new RatioResolutionPolicy(CAMERA_WIDTH * 2, CAMERA_HEIGHT * 2), this.mBoundChaseCamera);
+	}
+
+	@Override
+	public Engine onCreateEngine(final EngineOptions pEngineOptions) {
+		return new Engine(pEngineOptions);
 	}
 
 	@Override
 	public void onCreateResources() {
 		BitmapTextureAtlasTextureRegionFactory.setAssetBasePath("gfx/");
 		
-		this.mBitmapTextureAtlas = new BitmapTextureAtlas(this.getTextureManager(), 256, 128, TextureOptions.BILINEAR);
-		this.mPlayerTextureRegion = BitmapTextureAtlasTextureRegionFactory.createTiledFromAsset(this.mBitmapTextureAtlas, this, "player.png", 0, 0, 3, 4);
-		this.mEnemyTextureRegion = BitmapTextureAtlasTextureRegionFactory.createTiledFromAsset(this.mBitmapTextureAtlas, this, "enemy.png", 73, 0, 3, 4);
+		this.mBitmapTextureAtlas = new BitmapTextureAtlas(this.getTextureManager(), 64, 32, TextureOptions.BILINEAR);
+		this.mBoxFaceTextureRegion = BitmapTextureAtlasTextureRegionFactory.createTiledFromAsset(this.mBitmapTextureAtlas, this, "face_box_tiled.png", 0, 0, 2, 1); // 64x32
 		this.mBitmapTextureAtlas.load();
-
-		this.mAutoParallaxBackgroundTexture = new BitmapTextureAtlas(this.getTextureManager(), 1024, 1024);
-		this.mParallaxLayerFront = BitmapTextureAtlasTextureRegionFactory.createFromAsset(this.mAutoParallaxBackgroundTexture, this, "parallax_background_layer_front.png", 0, 0);
-		this.mParallaxLayerBack = BitmapTextureAtlasTextureRegionFactory.createFromAsset(this.mAutoParallaxBackgroundTexture, this, "parallax_background_layer_back.png", 0, 188);
-		this.mParallaxLayerMid = BitmapTextureAtlasTextureRegionFactory.createFromAsset(this.mAutoParallaxBackgroundTexture, this, "parallax_background_layer_mid.png", 0, 669);
-		this.mAutoParallaxBackgroundTexture.load();
 	}
 
 	@Override
-	public Scene onCreateScene() {	
+	public Scene onCreateScene() {
 		this.mEngine.registerUpdateHandler(new FPSLogger());
 
-		final Scene scene = new Scene();
-		final AutoParallaxBackground autoParallaxBackground = new AutoParallaxBackground(0, 0, 0, 5);
-		final VertexBufferObjectManager vertexBufferObjectManager = this.getVertexBufferObjectManager();
-		autoParallaxBackground.attachParallaxEntity(new ParallaxEntity(0.0f, new Sprite(0, displayHeight - this.mParallaxLayerBack.getHeight(), this.mParallaxLayerBack, vertexBufferObjectManager)));
-		autoParallaxBackground.attachParallaxEntity(new ParallaxEntity(-5.0f, new Sprite(0, 80, this.mParallaxLayerMid, vertexBufferObjectManager)));
-		autoParallaxBackground.attachParallaxEntity(new ParallaxEntity(-10.0f, new Sprite(0, displayHeight - this.mParallaxLayerFront.getHeight(), this.mParallaxLayerFront, vertexBufferObjectManager)));
-		scene.setBackground(autoParallaxBackground);
+		this.mScene = new Scene();
+		this.mScene.setOnSceneTouchListener(this);
 
-		/* Calculate the coordinates for the face, so its centered on the camera. */
-		final float playerX = (displayWidth - this.mPlayerTextureRegion.getWidth()) / 2;
-		final float playerY = displayHeight - this.mPlayerTextureRegion.getHeight() - 5;
+		this.mPhysicsWorld = new PhysicsWorld(new Vector2(0, SensorManager.GRAVITY_EARTH), false);
 
-		/* Create two sprits and add it to the scene. */
-		final AnimatedSprite player = new AnimatedSprite(playerX, playerY, this.mPlayerTextureRegion, vertexBufferObjectManager);
-		player.setScaleCenterY(this.mPlayerTextureRegion.getHeight());
-		player.setScale(2);
-		player.animate(new long[]{200, 200, 200}, 3, 5, true);
+		final Rectangle ground = new Rectangle(0, CAMERA_HEIGHT - 2, CAMERA_WIDTH, 2, this.getVertexBufferObjectManager());
+		final Rectangle roof = new Rectangle(0, 0, CAMERA_WIDTH, 2, this.getVertexBufferObjectManager());
+		final Rectangle left = new Rectangle(0, 0, 2, CAMERA_HEIGHT, this.getVertexBufferObjectManager());
+		final Rectangle right = new Rectangle(CAMERA_WIDTH - 2, 0, 2, CAMERA_HEIGHT, this.getVertexBufferObjectManager());
 
-		final AnimatedSprite enemy = new AnimatedSprite(playerX - 80, playerY, this.mEnemyTextureRegion, vertexBufferObjectManager);
-		enemy.setScaleCenterY(this.mEnemyTextureRegion.getHeight());
-		enemy.setScale(2);
-		enemy.animate(new long[]{200, 200, 200}, 3, 5, true);
+		final FixtureDef wallFixtureDef = PhysicsFactory.createFixtureDef(0, 0.5f, 0.5f);
+		PhysicsFactory.createBoxBody(this.mPhysicsWorld, ground, BodyType.StaticBody, wallFixtureDef);
+		PhysicsFactory.createBoxBody(this.mPhysicsWorld, roof, BodyType.StaticBody, wallFixtureDef);
+		PhysicsFactory.createBoxBody(this.mPhysicsWorld, left, BodyType.StaticBody, wallFixtureDef);
+		PhysicsFactory.createBoxBody(this.mPhysicsWorld, right, BodyType.StaticBody, wallFixtureDef);
 
-		scene.attachChild(player);
-		scene.attachChild(enemy);
+		this.mScene.attachChild(ground);
+		this.mScene.attachChild(roof);
+		this.mScene.attachChild(left);
+		this.mScene.attachChild(right);
 
-		return scene;
+		this.mScene.registerUpdateHandler(this.mPhysicsWorld);
+
+		final HUD hud = new HUD();
+
+		this.mBoundChaseCamera.setHUD(hud);
+
+		return this.mScene;
 	}
-	
+
+	@Override
+	public boolean onSceneTouchEvent(final Scene pScene, final TouchEvent pSceneTouchEvent) {
+		if(this.mPhysicsWorld != null) {
+			if(pSceneTouchEvent.isActionDown()) {
+				this.addFace(pSceneTouchEvent.getX(), pSceneTouchEvent.getY());
+				return true;
+			}
+		}
+		return false;
+	}
+
+	public void onAccelerationAccuracyChanged(AccelerationData pAccelerationData) {
+
+	}
+
+	@Override
+	public void onAccelerationChanged(final AccelerationData pAccelerationData) {
+		final Vector2 gravity = Vector2Pool.obtain(pAccelerationData.getX(), pAccelerationData.getY());
+		this.mPhysicsWorld.setGravity(gravity);
+		Vector2Pool.recycle(gravity);
+	}
+
+	@Override
+	public void onResumeGame() {
+		super.onResumeGame();
+
+		this.enableAccelerationSensor(this);
+	}
+
+	@Override
+	public void onPauseGame() {
+		super.onPauseGame();
+
+		this.disableAccelerationSensor();
+	}
 
 	// ===========================================================
 	// Methods
 	// ===========================================================
+
+	private void addFace(final float pX, final float pY) {
+		final FixtureDef objectFixtureDef = PhysicsFactory.createFixtureDef(1, 0.5f, 0.5f);
+
+		final AnimatedSprite face = new AnimatedSprite(pX, pY, this.mBoxFaceTextureRegion, this.getVertexBufferObjectManager());
+		face.animate(100);
+		final Body body = PhysicsFactory.createBoxBody(this.mPhysicsWorld, face, BodyType.DynamicBody, objectFixtureDef);
+
+		this.mScene.attachChild(face);
+		this.mPhysicsWorld.registerPhysicsConnector(new PhysicsConnector(face, body, true, true));
+
+		if(this.mFaceCount == 0){
+			this.mBoundChaseCamera.setChaseEntity(face);
+		}
+
+		this.mFaceCount++;
+	}
 
 	// ===========================================================
 	// Inner and Anonymous Classes
